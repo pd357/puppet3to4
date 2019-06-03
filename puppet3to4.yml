@@ -1,0 +1,112 @@
+---
+#Ref, https://github.com/Katello/katello-client-bootstrap/blob/master/bootstrap.yml
+##Ref, https://bugzilla.redhat.com/show_bug.cgi?id=1547951
+- hosts: all
+  vars:
+    - hammercli_server: satellite.example.com 
+    - puppet_ca_fqdn: satellite.example.com 
+    - new_capsule_fqdn: satellite.example.com 
+    - hammer_u : hammer_user
+    - hammer_p : insecure 
+    - puppet3_config: /etc/puppet/puppet.conf
+    - puppet4_config: /etc/puppetlabs/puppet/puppet.conf 
+    - subnet_name: sat_client_vlan700 
+    - puppet_env: KT_RMIS_Pre_Alpha_L_7_45
+    - puppet_env: KT_Satclients_Dev_vms_vlan700
+    - puppet_env_change: False 
+  tasks:
+
+  - name: Puppet 3to4 | Handling environment with undefined subnets on hosts.
+    block:
+      - name: Puppet 3to4 | Define {{ subnet_name }} as subnet for {{ ansible_fqdn }} - REQUIRED. 
+        command: "/bin/hammer -u {{hammer_u}} -p {{hammer_p}} host update --name {{ ansible_fqdn }} --subnet {{ subnet_name }}"
+        delegate_to: "{{ hammercli_server }}"
+        register: reg_update
+        ,hammer,subnet
+      - debug: 
+          msg: "{{reg_update.stdout}}"
+
+  - name: Puppet 3to4 | Upgrade puppet packages.
+    yum:
+      name: puppet
+      state: latest
+    
+
+  - name: Puppet 3to4 | Stop puppet on clients.
+    service:
+      name: puppet
+      state: stopped
+    
+
+  - name: Puppet 3to4 | Copy old puppet.conf(.rpmsave) file to {{ puppet4_config }}
+    copy:
+      remote_src: yes
+      src: /etc/puppet/puppet.conf.rpmsave
+      dest: "{{ puppet4_config }}"
+      force: yes
+      mode: preserve
+    
+
+  - name: Puppet 3to4 | puppet.conf replace vardir
+    lineinfile: 
+      path: "{{ puppet4_config }}" 
+      regexp: '^vardir'
+      line: 'vardir = /opt/puppetlabs/puppet/cache'
+    
+
+  - name: Puppet 3to4 | puppet.conf replace logdir 
+    lineinfile:
+      path: "{{ puppet4_config }}" 
+      regexp: '^logdir'
+      line: 'logdir = /var/log/puppetlabs/puppet'
+    
+
+  - name: Puppet 3to4 | puppet.conf replace rundir
+    lineinfile:
+      path: "{{ puppet4_config }}"
+      regexp: '^rundir' 
+      line: 'rundir = /var/run/puppetlabs'
+    
+
+  - name: Puppet 3to4 | puppet.conf replace ssldir
+    lineinfile:
+      path: "{{ puppet4_config }}"
+      regexp: '^ssldir'
+      line: 'ssldir = /etc/puppetlabs/puppet/ssl'
+    
+
+  - name: Puppet 3to4 | puppet.conf replace ca_server
+    lineinfile:
+      path: "{{ puppet4_config }}"
+      regexp: '^ca_server'
+      line: "ca_server       = {{ puppet_ca_fqdn }}"   
+    
+
+  - name: Puppet 3to4 | puppet.conf  replace server
+    lineinfile:
+      path: "{{ puppet4_config }}"
+      regexp: '^server'
+      line: "server          = {{ new_capsule_fqdn }}"
+    
+
+  - name: Puppet 3to4 | puppet.conf change certificate name to {{ ansible_fqdn }}
+    lineinfile:
+      path: "{{ puppet4_config }}" 
+      regexp: '^certname'
+      line: "certname        = {{ ansible_fqdn }}"
+    
+
+  - name: Puppet 3to4 | set environment
+    when: puppet_env_change 
+    lineinfile:
+      path: "{{ puppet4_config }}"
+      regexp: '^environment'
+      line: "environment     = {{ puppet_env }}"
+    
+
+  - name: Puppet 3to4 | Ensure puppet service is started.
+    service:
+      name: puppet
+      enabled: yes
+      state: restarted
+    
